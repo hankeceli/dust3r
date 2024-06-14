@@ -1,11 +1,73 @@
 import sys
+import trimesh
+import numpy as np
+import os
+import torch
+from scipy.spatial.transform import Rotation
+from datetime import datetime
+# import rerun as rr
+
 sys.path.append("..")
 from dust3r.inference import inference
 from dust3r.model import AsymmetricCroCo3DStereo
 from dust3r.utils.image import load_images
 from dust3r.image_pairs import make_pairs
 from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
-import numpy as np
+from dust3r.utils.device import to_numpy
+from dust3r.viz import add_scene_cam, CAM_COLORS, OPENGL, pts3d_to_trimesh, cat_meshes
+
+def generate_unique_filename(prefix="file", extension="txt"):
+    # Get the current date and time, and format it
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Create the filename
+    filename = f"{prefix}_{current_time}.{extension}"
+
+    return filename
+
+def get_3D_model_from_scene_list(outdir, silent, scene_list, min_conf_thr=3, as_pointcloud=False, mask_sky=False,
+                            clean_depth=False, transparent_cams=False, cam_size=0.05):
+    """
+    extract 3D_model (glb file) from a list of reconstructed scenes
+    """
+    scene = trimesh.Scene()
+    for scene_idx, scene_item in enumerate(scene_list):
+        if scene_item is None:
+            continue
+        # # post processes
+        # if clean_depth:
+        #     scene_item = scene_item.clean_pointcloud()
+        # if mask_sky:
+        #     scene_item = scene_item.mask_sky()
+
+        # scene_list.append((imgs, focals, poses, pts3d_list, confidence_masks))
+        # get optimized values from scene_item
+        rgbimg = scene_item[0]
+        focals = scene_item[1].cpu()
+        cams2world = scene_item[2].cpu()
+        # 3D pointcloud from depthmap, poses and intrinsics
+        pts3d = to_numpy(scene_item[3])
+        # scene_item.min_conf_thr = float(scene_item.conf_trf(torch.tensor(min_conf_thr)))
+        msk = to_numpy(scene_item[4])
+
+        # full pointcloud
+        if as_pointcloud:
+            pts = np.concatenate([p[m] for p, m in zip(pts3d, msk)])
+            col = np.concatenate([p[m] for p, m in zip(rgbimg, msk)])
+            pct = trimesh.PointCloud(pts.reshape(-1, 3), colors=col.reshape(-1, 3))
+            scene.add_geometry(pct)
+        else:
+            meshes = []
+            for i in range(len(rgbimg)):
+                meshes.append(pts3d_to_trimesh(rgbimg[i], pts3d[i], msk[i]))
+            mesh = trimesh.Trimesh(**cat_meshes(meshes))
+            scene.add_geometry(mesh)
+
+    outfile = os.path.join(outdir, generate_unique_filename(prefix="scene", extension="glb"))
+    if not silent:
+        print('(exporting 3D scene to', outfile, ')')
+    scene.export(file_obj=outfile)
+    return outfile
 
 if __name__ == '__main__':
     device = 'cpu'
@@ -19,8 +81,8 @@ if __name__ == '__main__':
     model = AsymmetricCroCo3DStereo.from_pretrained(model_name).to(device)
     # load_images can take a list of images or a directory
     path = '../images/'
-    image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png']
-    # image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png', '000004.png', '000005.png']
+    # image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png']
+    image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png', '000004.png', '000005.png']
     image_list = [path + image_filename for image_filename in image_filename_ls]
     scene_list = []
     scale_factor_cur2prev = 1.0
@@ -29,7 +91,6 @@ if __name__ == '__main__':
     prev_trf_cur2nex = None
     # transformation matrix (original, first iamge in first window -> next)
     trf_org2cur = None
-
 
     for idx in range(len(image_list)-1):
         print(image_list[idx],image_list[idx+1])
@@ -66,12 +127,12 @@ if __name__ == '__main__':
         pts3d = scene.get_pts3d()
         confidence_masks = scene.get_masks()
 
-        scene_list.append((imgs, focals, poses, pts3d, confidence_masks))
         # visualize reconstruction
         #scene.show()
         print("len(pose):", len(poses))
         print("poses[0]:\n", poses[0])
         print("poses[1]:\n", poses[1])
+        print("len(pts3d):", len(pts3d))
 
         # * pose[1] is the transformation matrix (current->next)
         trf_cur2nex = poses[1].detach().numpy()
@@ -105,6 +166,22 @@ if __name__ == '__main__':
             # * calculate the transformation matrix (original, first iamge in first window -> current)
             trf_org2cur = prev_trf_cur2nex @ trf_org2cur
         print("trf_org2cur:\n", trf_org2cur)
+
+        pts3d_list = []
+        # * transform point cloud (pts3d)
+        for i in range(len(poses)):
+            if idx == 0:
+                pts3d_list.append(pts3d[i])
+            else:
+            # transform point cloud to the original coordinate system
+                tmp_pts3d = pts3d[i].detach().numpy().copy().reshape(-1, 3)
+                tmp_pts3d = np.hstack((tmp_pts3d, np.ones((tmp_pts3d.shape[0], 1))))
+                transformed_pts3d = np.dot(np.linalg.inv(trf_org2cur), tmp_pts3d.T).T
+                transformed_pts3d = transformed_pts3d[:, :3].reshape(current_pts3d.shape)
+                pts3d_list.append(transformed_pts3d)
+
+        # * save the scene in the original coordinate system
+        scene_list.append((imgs, focals, poses, pts3d_list, confidence_masks))
 
         prev_trf_cur2nex = scaled_trf_cur2nex
         prev_pts3d = pts3d[1].detach().numpy()
@@ -144,6 +221,15 @@ if __name__ == '__main__':
         plt.savefig('../output/' + figure_title)  # Save the figure before showing it
         plt.show(block=True)
 
+    # visualize the final scene
+    outdir = '../output'
+    as_pointcloud = False
+    outfile_path = get_3D_model_from_scene_list(outdir=outdir, silent=False, scene_list=scene_list, min_conf_thr=3, as_pointcloud=as_pointcloud,
+                            mask_sky=False, clean_depth=False, transparent_cams=False, cam_size=0.05)
+
+    # * Rerun: if you run on a local machine, you can visualize with rerun
+    # rr.init("rerun_example_my_data", spawn=True)
+    # rr.log_file_from_path(outfile_path)
 
     print("final pose:")
     # print(adjusted_pose)

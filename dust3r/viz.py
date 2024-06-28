@@ -217,7 +217,7 @@ def add_scene_cam(scene, pose_c2w, edge_color, image=None, focal=None, imsize=No
     aspect_ratio = np.eye(4)
     aspect_ratio[0, 0] = W/H
     transform = pose_c2w @ OPENGL @ aspect_ratio @ rot45
-    cam = trimesh.creation.cone(width, height, sections=4)  # , transform=transform)
+    cam = trimesh.creation.cone(radius=width, height=height, sections=4)  # , transform=transform)
 
     # this is the image
     if image is not None:

@@ -44,7 +44,7 @@ class BasePCOptimizer (nn.Module):
     def _init_from_views(self, view1, view2, pred1, pred2,
                          dist='l1',
                          conf='log',
-                         min_conf_thr=3,
+                         min_conf_thr=7,
                          base_scale=0.5,
                          allow_pw_adaptors=False,
                          pw_break=20,
@@ -79,8 +79,6 @@ class BasePCOptimizer (nn.Module):
         self.conf_i = NoGradParamDict({ij: pred1_conf[n] for n, ij in enumerate(self.str_edges)})
         self.conf_j = NoGradParamDict({ij: pred2_conf[n] for n, ij in enumerate(self.str_edges)})
         self.im_conf = self._compute_img_conf(pred1_conf, pred2_conf)
-        for i in range(len(self.im_conf)):
-            self.im_conf[i].requires_grad = False
 
         # pairwise pose parameters
         self.base_scale = base_scale
@@ -366,12 +364,12 @@ def global_alignment_loop(net, lr=0.01, niter=300, schedule='cosine', lr_min=1e-
     if verbose:
         with tqdm.tqdm(total=niter) as bar:
             while bar.n < bar.total:
-                loss, lr = global_alignment_iter(net, bar.n, niter, lr_base, lr_min, optimizer, schedule)
+                loss = global_alignment_iter(net, bar.n, niter, lr_base, lr_min, optimizer, schedule)
                 bar.set_postfix_str(f'{lr=:g} loss={loss:g}')
                 bar.update()
     else:
         for n in range(niter):
-            loss, _ = global_alignment_iter(net, n, niter, lr_base, lr_min, optimizer, schedule)
+            loss = global_alignment_iter(net, n, niter, lr_base, lr_min, optimizer, schedule)
     return loss
 
 
@@ -389,4 +387,4 @@ def global_alignment_iter(net, cur_iter, niter, lr_base, lr_min, optimizer, sche
     loss.backward()
     optimizer.step()
 
-    return float(loss), lr
+    return float(loss)

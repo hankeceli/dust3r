@@ -51,15 +51,23 @@ def get_3D_model_from_scene_list(outdir, silent, scene_list, min_conf_thr=3, as_
         msk = to_numpy(scene_item[4])
 
         # full pointcloud
+        # TODO: use only either pts3d
         if as_pointcloud:
-            pts = np.concatenate([p[m] for p, m in zip(pts3d, msk)])
-            col = np.concatenate([p[m] for p, m in zip(rgbimg, msk)])
+            # all images in one scene
+            # pts = np.concatenate([p[m] for p, m in zip(pts3d, msk)])
+            # col = np.concatenate([p[m] for p, m in zip(rgbimg, msk)])
+            # single image in one scene
+            pts = pts3d[0][msk[0]]
+            col = rgbimg[0][msk[0]]
             pct = trimesh.PointCloud(pts.reshape(-1, 3), colors=col.reshape(-1, 3))
             scene.add_geometry(pct)
         else:
             meshes = []
-            for i in range(len(rgbimg)):
-                meshes.append(pts3d_to_trimesh(rgbimg[i], pts3d[i], msk[i]))
+            # all images in one scene
+            # for i in range(len(rgbimg)):
+            #     meshes.append(pts3d_to_trimesh(rgbimg[i], pts3d[i], msk[i]))
+            # single image in one scene
+            meshes.append(pts3d_to_trimesh(rgbimg[0], pts3d[0], msk[0]))
             mesh = trimesh.Trimesh(**cat_meshes(meshes))
             scene.add_geometry(mesh)
 
@@ -80,15 +88,15 @@ if __name__ == '__main__':
     # you can put the path to a local checkpoint in model_name if needed
     model = AsymmetricCroCo3DStereo.from_pretrained(model_name).to(device)
     # load_images can take a list of images or a directory
-    path = '../images/'
-    # image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png']
-    image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png', '000004.png', '000005.png']
+    path = '../images/06/image_2/'
+    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(0, 31, 3)]
+    # image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png', '000004.png', '000005.png']
     image_list = [path + image_filename for image_filename in image_filename_ls]
     scene_list = []
     scale_factor_cur2prev = 1.0
     prev_pose = np.eye(4)
     prev_pts3d = None
-    prev_trf_cur2nex = None
+    prev_trf_cur2nex = np.eye(4)
     # transformation matrix (original, first iamge in first window -> next)
     trf_org2cur = None
 
@@ -135,7 +143,7 @@ if __name__ == '__main__':
         print("len(pts3d):", len(pts3d))
 
         # * pose[1] is the transformation matrix (current->next)
-        trf_cur2nex = poses[1].detach().numpy()
+        trf_cur2nex = np.dot(poses[1].detach().numpy(), np.linalg.inv(poses[0].detach().numpy()))
 
         current_pts3d = pts3d[0].detach().numpy()
         print("cur_pts3d shape", current_pts3d.shape)
@@ -152,7 +160,7 @@ if __name__ == '__main__':
             transformed_prev_pts3d = np.dot(prev_trf_cur2nex, points_homogeneous.T).T
             # Transform from shape (73728, 4) to (73728, 3)
             transformed_prev_pts3d = transformed_prev_pts3d[:, :3].reshape(prev_pts3d.shape)
-            scale_factor_cur2prev = np.mean(transformed_prev_pts3d[:, :, 2]) / np.mean(current_pts3d[:, :, 2])
+            scale_factor_cur2prev = np.median(transformed_prev_pts3d[:, :, 2]) / np.median(current_pts3d[:, :, 2])
             print("scale_factor_cur2prev:", scale_factor_cur2prev)
 
         # * apply scaling on the transformation matrix
@@ -160,9 +168,9 @@ if __name__ == '__main__':
         scaled_trf_cur2nex[:3, 3] = scale_factor_cur2prev * trf_cur2nex[:3, 3]
         print("scaled_trf_cur2nex:\n", scaled_trf_cur2nex)
 
-        if idx == 1: # org is the first coordinate system
+        if idx == 0: # org is the first coordinate system
             trf_org2cur = prev_trf_cur2nex
-        elif idx > 1:
+        elif idx > 0:
             # * calculate the transformation matrix (original, first iamge in first window -> current)
             trf_org2cur = prev_trf_cur2nex @ trf_org2cur
         print("trf_org2cur:\n", trf_org2cur)
@@ -179,6 +187,8 @@ if __name__ == '__main__':
                 transformed_pts3d = np.dot(np.linalg.inv(trf_org2cur), tmp_pts3d.T).T
                 transformed_pts3d = transformed_pts3d[:, :3].reshape(current_pts3d.shape)
                 pts3d_list.append(transformed_pts3d)
+                # print(f"original_pts3d[{i}]: {pts3d[i]}" )
+                # print(f"transformed_pts3d[{i}]: {transformed_pts3d}" )
 
         # * save the scene in the original coordinate system
         scene_list.append((imgs, focals, poses, pts3d_list, confidence_masks))

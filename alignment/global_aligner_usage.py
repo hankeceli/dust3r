@@ -16,6 +16,8 @@ from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
 from dust3r.utils.device import to_numpy
 from dust3r.viz import add_scene_cam, CAM_COLORS, OPENGL, pts3d_to_trimesh, cat_meshes
 
+import pdb # for debugging
+
 def generate_unique_filename(prefix="file", extension="txt"):
     # Get the current date and time, and format it
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -51,7 +53,6 @@ def get_3D_model_from_scene_list(outdir, silent, scene_list, min_conf_thr=3, as_
         msk = to_numpy(scene_item[4])
 
         # full pointcloud
-        # TODO: use only either pts3d
         if as_pointcloud:
             # all images in one scene
             # pts = np.concatenate([p[m] for p, m in zip(pts3d, msk)])
@@ -64,10 +65,10 @@ def get_3D_model_from_scene_list(outdir, silent, scene_list, min_conf_thr=3, as_
         else:
             meshes = []
             # all images in one scene
-            # for i in range(len(rgbimg)):
-            #     meshes.append(pts3d_to_trimesh(rgbimg[i], pts3d[i], msk[i]))
+            for i in range(len(rgbimg)):
+                meshes.append(pts3d_to_trimesh(rgbimg[i], pts3d[i], msk[i]))
             # single image in one scene
-            meshes.append(pts3d_to_trimesh(rgbimg[0], pts3d[0], msk[0]))
+            # meshes.append(pts3d_to_trimesh(rgbimg[0], pts3d[0], msk[0]))
             mesh = trimesh.Trimesh(**cat_meshes(meshes))
             scene.add_geometry(mesh)
 
@@ -89,7 +90,7 @@ if __name__ == '__main__':
     model = AsymmetricCroCo3DStereo.from_pretrained(model_name).to(device)
     # load_images can take a list of images or a directory
     path = '../images/06/image_2/'
-    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(0, 31, 3)]
+    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(0, 16, 3)]
     # image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png', '000004.png', '000005.png']
     image_list = [path + image_filename for image_filename in image_filename_ls]
     scene_list = []
@@ -101,6 +102,7 @@ if __name__ == '__main__':
     trf_org2cur = None
 
     for idx in range(len(image_list)-1):
+        pts3d_list = []
         print(image_list[idx],image_list[idx+1])
 
         images = load_images([image_list[idx],image_list[idx+1]], size=512)
@@ -130,6 +132,14 @@ if __name__ == '__main__':
 
         # retrieve useful values from scene:
         imgs = scene.imgs
+        # imgs = scene.imgs[0], scene.imgs[0]
+        # pdb.set_trace()
+        # imgs[0][...,0]=0
+        # imgs[0][...,1]=1
+        # imgs[0][...,2]=0
+        # imgs[1][...,0]=1
+        # imgs[1][...,1]=1
+        # imgs[1][...,2]=0
         focals = scene.get_focals()
         poses = scene.get_im_poses()
         pts3d = scene.get_pts3d()
@@ -141,6 +151,7 @@ if __name__ == '__main__':
         print("poses[0]:\n", poses[0])
         print("poses[1]:\n", poses[1])
         print("len(pts3d):", len(pts3d))
+        print("focals:\n", focals)
 
         # * pose[1] is the transformation matrix (current->next)
         trf_cur2nex = np.dot(poses[1].detach().numpy(), np.linalg.inv(poses[0].detach().numpy()))
@@ -160,8 +171,18 @@ if __name__ == '__main__':
             transformed_prev_pts3d = np.dot(prev_trf_cur2nex, points_homogeneous.T).T
             # Transform from shape (73728, 4) to (73728, 3)
             transformed_prev_pts3d = transformed_prev_pts3d[:, :3].reshape(prev_pts3d.shape)
+            # print("transformed_prev_pts3d shape", transformed_prev_pts3d.shape)
+            # print("current_pts3d shape", current_pts3d.shape)
+            # pts3d_list.append(transformed_prev_pts3d)
             scale_factor_cur2prev = np.median(transformed_prev_pts3d[:, :, 2]) / np.median(current_pts3d[:, :, 2])
             print("scale_factor_cur2prev:", scale_factor_cur2prev)
+
+            # for debugging
+            tmp_sclaed_cur_pts3d = scale_factor_cur2prev * current_pts3d
+            points_homogeneous = np.hstack((tmp_sclaed_cur_pts3d.reshape(-1, 3), np.ones((tmp_sclaed_cur_pts3d.reshape(-1, 3).shape[0], 1))))
+            transformed_cur_pts3d = np.dot(poses[0].detach().numpy(), points_homogeneous.T).T
+            transformed_cur_pts3d = transformed_cur_pts3d[:, :3].reshape(current_pts3d.shape)
+            # pts3d_list.append(transformed_cur_pts3d)
 
         # * apply scaling on the transformation matrix
         scaled_trf_cur2nex = trf_cur2nex.copy()
@@ -169,22 +190,24 @@ if __name__ == '__main__':
         print("scaled_trf_cur2nex:\n", scaled_trf_cur2nex)
 
         if idx == 0: # org is the first coordinate system
-            trf_org2cur = prev_trf_cur2nex
+            trf_org2cur = poses[0].detach().numpy()
         elif idx > 0:
             # * calculate the transformation matrix (original, first iamge in first window -> current)
             trf_org2cur = prev_trf_cur2nex @ trf_org2cur
         print("trf_org2cur:\n", trf_org2cur)
 
-        pts3d_list = []
         # * transform point cloud (pts3d)
         for i in range(len(poses)):
             if idx == 0:
+                # pts3d_list.append(np.zeros(pts3d[i].shape)) # for debugging
                 pts3d_list.append(pts3d[i])
             else:
             # transform point cloud to the original coordinate system
                 tmp_pts3d = pts3d[i].detach().numpy().copy().reshape(-1, 3)
+                tmp_pts3d *= scale_factor_cur2prev
                 tmp_pts3d = np.hstack((tmp_pts3d, np.ones((tmp_pts3d.shape[0], 1))))
                 transformed_pts3d = np.dot(np.linalg.inv(trf_org2cur), tmp_pts3d.T).T
+                # pdb.set_trace()
                 transformed_pts3d = transformed_pts3d[:, :3].reshape(current_pts3d.shape)
                 pts3d_list.append(transformed_pts3d)
                 # print(f"original_pts3d[{i}]: {pts3d[i]}" )

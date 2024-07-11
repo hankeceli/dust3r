@@ -1,6 +1,7 @@
 import sys
 import trimesh
 import numpy as np
+import numpy.ma as ma
 import os
 import torch
 from scipy.spatial.transform import Rotation
@@ -65,10 +66,12 @@ def get_3D_model_from_scene_list(outdir, silent, scene_list, min_conf_thr=3, as_
         else:
             meshes = []
             # all images in one scene
-            for i in range(len(rgbimg)):
-                meshes.append(pts3d_to_trimesh(rgbimg[i], pts3d[i], msk[i]))
+            # for i in range(len(rgbimg)):
+                # meshes.append(pts3d_to_trimesh(rgbimg[i], pts3d[i], msk[i]))
+                # show all points, mask -> False
+                # meshes.append(pts3d_to_trimesh(rgbimg[i], pts3d[i], np.ones_like(msk[i])))
             # single image in one scene
-            # meshes.append(pts3d_to_trimesh(rgbimg[0], pts3d[0], msk[0]))
+            meshes.append(pts3d_to_trimesh(rgbimg[0], pts3d[0], msk[0]))
             mesh = trimesh.Trimesh(**cat_meshes(meshes))
             scene.add_geometry(mesh)
 
@@ -90,7 +93,7 @@ if __name__ == '__main__':
     model = AsymmetricCroCo3DStereo.from_pretrained(model_name).to(device)
     # load_images can take a list of images or a directory
     path = '../images/06/image_2/'
-    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(0, 16, 3)]
+    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(0, 10, 1)]
     # image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png', '000004.png', '000005.png']
     image_list = [path + image_filename for image_filename in image_filename_ls]
     scene_list = []
@@ -98,6 +101,7 @@ if __name__ == '__main__':
     prev_pose = np.eye(4)
     prev_pts3d = None
     prev_trf_cur2nex = np.eye(4)
+    prev_confidence_masks = None
     # transformation matrix (original, first iamge in first window -> next)
     trf_org2cur = None
 
@@ -144,6 +148,7 @@ if __name__ == '__main__':
         poses = scene.get_im_poses()
         pts3d = scene.get_pts3d()
         confidence_masks = scene.get_masks()
+        # pdb.set_trace()
 
         # visualize reconstruction
         #scene.show()
@@ -174,7 +179,16 @@ if __name__ == '__main__':
             # print("transformed_prev_pts3d shape", transformed_prev_pts3d.shape)
             # print("current_pts3d shape", current_pts3d.shape)
             # pts3d_list.append(transformed_prev_pts3d)
-            scale_factor_cur2prev = np.median(transformed_prev_pts3d[:, :, 2]) / np.median(current_pts3d[:, :, 2])
+            # scale_factor_cur2prev = np.median(transformed_prev_pts3d[:, :, 2]) / np.median(current_pts3d[:, :, 2])
+
+            # Apply mask to transformed_prev_pts3d and current_pts3d
+            both_masks = np.logical_and(prev_confidence_masks, confidence_masks[0])
+            # pdb.set_trace()
+            # * Calculate the scale factor by median of z values
+            # scale_factor_cur2prev = np.median(transformed_prev_pts3d[both_masks == 1, 2]) / np.median(current_pts3d[both_masks == 1, 2])
+            # pdb.set_trace()
+            # * by mean
+            scale_factor_cur2prev = np.mean(transformed_prev_pts3d[both_masks == 1, 2]) / np.mean(current_pts3d[both_masks == 1, 2])
             print("scale_factor_cur2prev:", scale_factor_cur2prev)
 
             # for debugging
@@ -203,6 +217,12 @@ if __name__ == '__main__':
                 pts3d_list.append(pts3d[i])
             else:
             # transform point cloud to the original coordinate system
+
+            # if (idx, i) in [(0, 0), (1, 1)]: # for debugging
+            #     pts3d_list.append(np.zeros(pts3d[i].shape))
+            # else:
+                # print("shown (idx, i) = ", (idx, i))
+                # the below is the original code
                 tmp_pts3d = pts3d[i].detach().numpy().copy().reshape(-1, 3)
                 tmp_pts3d *= scale_factor_cur2prev
                 tmp_pts3d = np.hstack((tmp_pts3d, np.ones((tmp_pts3d.shape[0], 1))))
@@ -210,14 +230,22 @@ if __name__ == '__main__':
                 # pdb.set_trace()
                 transformed_pts3d = transformed_pts3d[:, :3].reshape(current_pts3d.shape)
                 pts3d_list.append(transformed_pts3d)
-                # print(f"original_pts3d[{i}]: {pts3d[i]}" )
-                # print(f"transformed_pts3d[{i}]: {transformed_pts3d}" )
+            # if (idx, i) == (0, 1): # green for the first window, for debugging
+            #     print("shown (idx, i) = ", (idx, i))
+            #     # 1st window, 2nd image
+            #     imgs[1][...,0]=0
+            #     imgs[1][...,1]=1
+            #     imgs[1][...,2]=0
+
+            # print(f"original_pts3d[{i}]: {pts3d[i]}" )
+            # print(f"transformed_pts3d[{i}]: {transformed_pts3d}" )
 
         # * save the scene in the original coordinate system
         scene_list.append((imgs, focals, poses, pts3d_list, confidence_masks))
 
         prev_trf_cur2nex = scaled_trf_cur2nex
         prev_pts3d = pts3d[1].detach().numpy()
+        prev_confidence_masks = confidence_masks[1].detach().numpy()
 
         # * find 2D-2D matches between the two images
         from dust3r.utils.geometry import find_reciprocal_matches, xy_grid

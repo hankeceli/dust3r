@@ -6,6 +6,7 @@ import os
 import torch
 from scipy.spatial.transform import Rotation
 from datetime import datetime
+import pickle
 # import rerun as rr
 
 sys.path.append("..")
@@ -19,12 +20,15 @@ from dust3r.viz import add_scene_cam, CAM_COLORS, OPENGL, pts3d_to_trimesh, cat_
 
 import pdb # for debugging
 
-def generate_unique_filename(prefix="file", extension="txt"):
+def generate_unique_filename(prefix="", extension="txt"):
     # Get the current date and time, and format it
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Create the filename
-    filename = f"{prefix}_{current_time}.{extension}"
+    if prefix == "":
+        filename = f"{current_time}.{extension}"
+    else:
+        filename = f"{prefix}_{current_time}.{extension}"
 
     return filename
 
@@ -93,7 +97,7 @@ if __name__ == '__main__':
     model = AsymmetricCroCo3DStereo.from_pretrained(model_name).to(device)
     # load_images can take a list of images or a directory
     path = '../images/06/image_2/'
-    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(0, 10, 1)]
+    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(50, 60, 1)]
     # image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png', '000004.png', '000005.png']
     image_list = [path + image_filename for image_filename in image_filename_ls]
     scene_list = []
@@ -214,7 +218,7 @@ if __name__ == '__main__':
         for i in range(len(poses)):
             if idx == 0:
                 # pts3d_list.append(np.zeros(pts3d[i].shape)) # for debugging
-                pts3d_list.append(pts3d[i])
+                pts3d_list.append(pts3d[i].detach().numpy())
             else:
             # transform point cloud to the original coordinate system
 
@@ -244,7 +248,7 @@ if __name__ == '__main__':
         scene_list.append((imgs, focals, poses, pts3d_list, confidence_masks))
 
         prev_trf_cur2nex = scaled_trf_cur2nex
-        prev_pts3d = pts3d[1].detach().numpy()
+        prev_pts3d = pts3d_list[1] # transformed point cloud
         prev_confidence_masks = confidence_masks[1].detach().numpy()
 
         # * find 2D-2D matches between the two images
@@ -287,6 +291,10 @@ if __name__ == '__main__':
     as_pointcloud = False
     outfile_path = get_3D_model_from_scene_list(outdir=outdir, silent=False, scene_list=scene_list, min_conf_thr=3, as_pointcloud=as_pointcloud,
                             mask_sky=False, clean_depth=False, transparent_cams=False, cam_size=0.05)
+
+    # * save the scene_list in pickle format
+    with open(f'../output/scene_list_data/' + generate_unique_filename('', 'pkl'), 'wb') as f:
+        pickle.dump(scene_list, f)
 
     # * Rerun: if you run on a local machine, you can visualize with rerun
     # rr.init("rerun_example_my_data", spawn=True)

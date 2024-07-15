@@ -48,21 +48,27 @@ def log_data(pkl_data_path: Path) -> None:
 
         # extract data
         pts3d_0 = scene[3][0]
-        # pts3d_1 = scene[3][1]
         img_0 = scene[0][0]
-        # img_1 = scene[0][1]
         pose_0 = scene[2][0].detach().cpu().numpy()
+        mask_0 = scene[4][0]
 
         # only first image
         points = pts3d_0.reshape(-1, 3)
         colors = img_0.reshape(-1, 3)
+        mask_0 = mask_0.reshape(-1)
 
         if DISPLAY_ACCUMULATED_DATA:
-                # # * subsample the data in scene_list, (imgs, pts3d_list, mask) -> failed
-            skip = 20
-            # subsample these data into 1/skip
-            points = points[::skip]
-            colors = colors[::skip]
+            skip = 10
+
+            # * subsample these data into 1/skip
+            # without mask (debugging)
+            # points = points[::skip]
+            # colors = colors[::skip]
+
+            # with mask
+            points = points[mask_0][::skip]
+            colors = colors[mask_0][::skip]
+            # pdb.set_trace()
 
             if pts3d_accumulated is None:
                 pts3d_accumulated = points
@@ -74,7 +80,7 @@ def log_data(pkl_data_path: Path) -> None:
             colors = colors_accumulated
 
         # add the point cloud data to the log
-        rr.log('world', rr.Points3D(points, colors=colors, radii=0.003))
+        rr.log('world', rr.Points3D(points, colors=colors, radii=0.002))
 
         # Define the translation vector
         translation_vector = pose_0[:3, 3]

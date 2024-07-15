@@ -96,8 +96,9 @@ if __name__ == '__main__':
     # you can put the path to a local checkpoint in model_name if needed
     model = AsymmetricCroCo3DStereo.from_pretrained(model_name).to(device)
     # load_images can take a list of images or a directory
-    path = '../images/06/image_2/'
-    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(50, 60, 1)]
+    # path = '../images/06/image_2/'
+    path = '../images/08/'
+    image_filename_ls = [str(i).zfill(6) + '.png' for i in range(380, 521, 1)]
     # image_filename_ls = ['000000.png', '000001.png', '000002.png', '000003.png', '000004.png', '000005.png']
     image_list = [path + image_filename for image_filename in image_filename_ls]
     scene_list = []
@@ -230,7 +231,8 @@ if __name__ == '__main__':
                 tmp_pts3d = pts3d[i].detach().numpy().copy().reshape(-1, 3)
                 tmp_pts3d *= scale_factor_cur2prev
                 tmp_pts3d = np.hstack((tmp_pts3d, np.ones((tmp_pts3d.shape[0], 1))))
-                transformed_pts3d = np.dot(np.linalg.inv(trf_org2cur), tmp_pts3d.T).T
+                # transformed_pts3d = np.dot(np.linalg.inv(trf_org2cur), tmp_pts3d.T).T # failure (why?)
+                transformed_pts3d = np.dot(trf_org2cur, tmp_pts3d.T).T # success
                 # pdb.set_trace()
                 transformed_pts3d = transformed_pts3d[:, :3].reshape(current_pts3d.shape)
                 pts3d_list.append(transformed_pts3d)
@@ -248,7 +250,7 @@ if __name__ == '__main__':
         scene_list.append((imgs, focals, poses, pts3d_list, confidence_masks))
 
         prev_trf_cur2nex = scaled_trf_cur2nex
-        prev_pts3d = pts3d_list[1] # transformed point cloud
+        prev_pts3d = pts3d[1].detach().numpy()
         prev_confidence_masks = confidence_masks[1].detach().numpy()
 
         # * find 2D-2D matches between the two images
@@ -283,14 +285,14 @@ if __name__ == '__main__':
         for i in range(n_viz):
             (x0, y0), (x1, y1) = viz_matches_im0[i].T, viz_matches_im1[i].T
             plt.plot([x0, x1 + W0], [y0, y1], '-+', color=cmap(i / (n_viz - 1)), scalex=False, scaley=False)
-        plt.savefig('../output/' + figure_title)  # Save the figure before showing it
+        # plt.savefig('../output/' + figure_title)  # Save the figure before showing it
         plt.show(block=True)
 
-    # visualize the final scene
-    outdir = '../output'
-    as_pointcloud = False
-    outfile_path = get_3D_model_from_scene_list(outdir=outdir, silent=False, scene_list=scene_list, min_conf_thr=3, as_pointcloud=as_pointcloud,
-                            mask_sky=False, clean_depth=False, transparent_cams=False, cam_size=0.05)
+    # visualize the final scene in mesh -> disabled
+    # outdir = '../output'
+    # as_pointcloud = False
+    # outfile_path = get_3D_model_from_scene_list(outdir=outdir, silent=False, scene_list=scene_list, min_conf_thr=3, as_pointcloud=as_pointcloud,
+    #                         mask_sky=False, clean_depth=False, transparent_cams=False, cam_size=0.05)
 
     # * save the scene_list in pickle format
     with open(f'../output/scene_list_data/' + generate_unique_filename('', 'pkl'), 'wb') as f:

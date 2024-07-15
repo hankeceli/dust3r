@@ -29,7 +29,7 @@ DESCRIPTION = """
 """
 
 # Display accumulated point cloud data
-DISPLAY_ACCUMULATED_DATA = False
+DISPLAY_ACCUMULATED_DATA = True
 
 def log_data(pkl_data_path: Path) -> None:
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Y_DOWN, static=True)
@@ -51,20 +51,54 @@ def log_data(pkl_data_path: Path) -> None:
         # pts3d_1 = scene[3][1]
         img_0 = scene[0][0]
         # img_1 = scene[0][1]
+        pose_0 = scene[2][0].detach().cpu().numpy()
 
         # only first image
         points = pts3d_0.reshape(-1, 3)
         colors = img_0.reshape(-1, 3)
 
         if DISPLAY_ACCUMULATED_DATA:
+                # # * subsample the data in scene_list, (imgs, pts3d_list, mask) -> failed
+            skip = 20
+            # subsample these data into 1/skip
+            points = points[::skip]
+            colors = colors[::skip]
+
             if pts3d_accumulated is None:
                 pts3d_accumulated = points
+                colors_accumulated = colors
             else:
                 pts3d_accumulated = np.concatenate((pts3d_accumulated, points), axis=0)
+                colors_accumulated = np.concatenate((colors_accumulated, colors), axis=0)
             points = pts3d_accumulated
+            colors = colors_accumulated
 
         # add the point cloud data to the log
         rr.log('world', rr.Points3D(points, colors=colors, radii=0.003))
+
+        # Define the translation vector
+        translation_vector = pose_0[:3, 3]
+        # translation_vector = np.array([0, 0, -1])
+        # pdb.set_trace()
+        # log the camera transforms:
+        rr.log(
+            "world/camera/image",
+            rr.Transform3D(translation=translation_vector,
+                           mat3x3=pose_0[:3, :3],
+                           ),
+        )
+        H, W = img_0.shape[:2]
+        rr.log(
+            "world/camera/image",
+            rr.Pinhole(
+                resolution=[W, H],
+                focal_length=min(H, W) * 1.1,
+                # camera_xyz=rr.ViewCoordinates.RDF,
+                # focal_length=min(H, W) * 0.5,
+                # Intentionally off-center to demonstrate that we support it
+                # principal_point=[0.45 * H, 0.55 * W],
+            ),
+        )
 
         # add image
         rr.log("world/camera/image/rgb", rr.Image(img_0))
@@ -87,25 +121,10 @@ def main() -> None:
         args,
         "rerun_example_rgbd",
         default_blueprint=rrb.Horizontal(
-            rrb.Vertical(
-                rrb.Spatial3DView(name="3D", origin="world"),
-                rrb.TextDocumentView(name="Description", origin="/description"),
-                row_shares=[7, 3],
-            ),
-            rrb.Vertical(
-                # Put the origin for both 2D spaces where the pinhole is logged. Doing so allows them to understand how they're connected to the 3D space.
-                # This enables interactions like clicking on a point in the 3D space to show the corresponding point in the 2D spaces and vice versa.
-                rrb.Spatial2DView(
-                    name="RGB & Depth",
-                    origin="world/camera/image",
-                    # overrides={"world/camera/image/rgb": [rr.components.Opacity(0.5)]},
-                ),
-                rrb.Tabs(
-                    rrb.Spatial2DView(name="RGB", origin="world/camera/image", contents="world/camera/image/rgb"),
-                    rrb.Spatial2DView(name="Depth", origin="world/camera/image", contents="world/camera/image/depth"),
-                ),
-                name="2D",
-                row_shares=[3, 3, 2],
+            rrb.Spatial3DView(name="3D", origin="world"),
+            rrb.Spatial2DView(
+                name="RGB",
+                origin="world/camera/image",
             ),
             column_shares=[2, 1],
         ),
